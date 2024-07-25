@@ -1,4 +1,4 @@
-# syntax = docker/dockerfile:1.2
+# syntax = docker/dockerfile:1.8
 ###############################################
 #                 Build stage                 #
 ###############################################
@@ -34,7 +34,7 @@ RUN VERSION=$(cat version.txt) \
 ###############################################
 #                 Build stage                 #
 ###############################################
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:6.0 AS dotnet-build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0 AS dotnet-build
 
 # Docker buildx supplies the value for this arg
 ARG TARGETPLATFORM
@@ -173,7 +173,7 @@ RUN . /tmp/rid.txt && dotnet publish -c release -o /app/Scim --no-restore --no-s
 ###############################################
 #                  App stage                  #
 ###############################################
-FROM mcr.microsoft.com/dotnet/aspnet:6.0
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
 ARG TARGETPLATFORM
 LABEL com.bitwarden.product="bitwarden"
 LABEL com.bitwarden.project="unified"
@@ -211,6 +211,7 @@ ENV globalSettings__logRollBySizeLimit="1073741824"
 # Add packages
 RUN apt-get update && apt-get install -y \
     curl \
+    jq \
     nginx \
     openssl \
     supervisor \
@@ -260,12 +261,13 @@ COPY docker-unified/hbs/app-id.hbs /etc/hbs/
 COPY docker-unified/hbs/config.yaml /etc/hbs/
 
 # Download hbs tool for generating final configurations
-RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] ; then curl -L --output hbs.zip https://github.com/bitwarden/Handlebars.conf/releases/download/v1.3.0/hbs_linux-x64_dotnet.zip; fi
-RUN if [ "$TARGETPLATFORM" = "linux/arm/v7" ] ; then curl -L --output hbs.zip https://github.com/bitwarden/Handlebars.conf/releases/download/v1.3.0/hbs_linux-armv7_dotnet.zip; fi
-RUN if [ "$TARGETPLATFORM" = "linux/arm64" ] ; then curl -L --output hbs.zip https://github.com/bitwarden/Handlebars.conf/releases/download/v1.3.0/hbs_linux-arm64_dotnet.zip; fi
+RUN echo "$(curl --silent https://api.github.com/repos/bitwarden/Handlebars.conf/git/refs/tags | jq -r 'last(.[].ref)' | sed 's/refs\/tags\///')"  > /tmp/latest.txt
+RUN LATEST_VERSION=$(cat /tmp/latest.txt) && if [ "$TARGETPLATFORM" = "linux/amd64" ] ; then curl -L --output hbs.zip https://github.com/bitwarden/Handlebars.conf/releases/download/$LATEST_VERSION/hbs_linux-x64.zip; fi
+RUN LATEST_VERSION=$(cat /tmp/latest.txt) && if [ "$TARGETPLATFORM" = "linux/arm/v7" ] ; then curl -L --output hbs.zip https://github.com/bitwarden/Handlebars.conf/releases/download/$LATEST_VERSION/hbs_linux-arm.zip; fi
+RUN LATEST_VERSION=$(cat /tmp/latest.txt) && if [ "$TARGETPLATFORM" = "linux/arm64" ] ; then curl -L --output hbs.zip https://github.com/bitwarden/Handlebars.conf/releases/download/$LATEST_VERSION/hbs_linux-arm64.zip; fi
 
 # Extract hbs
-RUN unzip hbs.zip -d /usr/local/bin && rm hbs.zip
+RUN unzip hbs.zip -d /usr/local/bin && mv /usr/local/bin/hbs* /usr/local/bin/hbs && rm hbs.zip
 RUN chmod +x /usr/local/bin/hbs
 
 # Copy entrypoint script and make it executable

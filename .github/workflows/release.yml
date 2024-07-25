@@ -1,13 +1,10 @@
 ---
 name: Release
-run-name: Release ${{ github.event.inputs.release_type }} v${{ github.event.inputs.release_version }}
+run-name: Release ${{ github.event.inputs.release_type }}
 
 on:
   workflow_dispatch:
     inputs:
-      release_version:
-        description: "Release Version"
-        required: true
       release_type:
         description: "Release Options"
         required: true
@@ -27,6 +24,7 @@ jobs:
     outputs:
       _WEB_RELEASE_TAG: ${{ steps.set-tags.outputs.WEB_RELEASE_TAG }}
       _CORE_RELEASE_TAG: ${{ steps.set-tags.outputs.CORE_RELEASE_TAG }}
+      _VERSION: ${{ steps.get-next-version.outputs.version }}
     steps:
       - name: Branch check
         if: ${{ github.event.inputs.release_type != 'Dry Run' }}
@@ -39,7 +37,7 @@ jobs:
           fi
 
       - name: Checkout repo
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Get Latest Self-Host Version
         id: get-self-host
@@ -47,15 +45,18 @@ jobs:
         with:
           repository: bitwarden/self-host
 
-      - name: Check Release Version
+      - name: Strip version
         env:
-          RELEASE_VERSION: ${{ github.event.inputs.release_version }}
-          PREVIOUS_RELEASE_VERSION: ${{ steps.get-self-host.outputs.version }}
+          CURRENT_VERSION: ${{ steps.get-self-host.outputs.version }}
         run: |
-          if [ "$RELEASE_VERSION" == "$PREVIOUS_RELEASE_VERSION" ]; then
-            echo "[!] Already released v$RELEASE_VERSION. Please bump version to continue"
-            exit 1
-          fi
+          VERSION_STRIPPED=$(echo $CURRENT_VERSION | sed 's/^v//')
+          echo "VERSION=$VERSION_STRIPPED" >> $GITHUB_ENV
+
+      - name: Get Next Release Version
+        id: get-next-version
+        uses: bitwarden/gh-actions/version-next@main
+        with:
+          version: ${{ env.VERSION }}
 
       - name: Set Release Tags
         id: set-tags
@@ -72,13 +73,13 @@ jobs:
     needs: setup
     steps:
       - name: Checkout repo
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           ref: main
 
       - name: Create release
         if: ${{ github.event.inputs.release_type != 'Dry Run' }}
-        uses: ncipollo/release-action@6c75be85e571768fa31b40abf38de58ba0397db5 # v1.13.0
+        uses: ncipollo/release-action@2c591bcc8ecdcd2db72b97d6147f871fcd833ba5 # v1.14.0
         with:
           artifacts: 'bitwarden.sh,
                       run.sh,
@@ -86,8 +87,8 @@ jobs:
                       run.ps1,
                       version.json'
           commit: ${{ github.sha }}
-          tag: "v${{ github.event.inputs.release_version }}"
-          name: "Version ${{ github.event.inputs.release_version }}"
+          tag: "v${{ needs.setup.outputs._VERSION }}"
+          name: "Version ${{ needs.setup.outputs._VERSION }}"
           body: "<insert release notes here>"
           token: ${{ secrets.GITHUB_TOKEN }}
           draft: true
@@ -100,12 +101,12 @@ jobs:
       - release
     steps:
       - name: Checkout repo
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           ref: main
 
       - name: Login to Azure - CI Subscription
-        uses: Azure/login@92a5484dfaf04ca78a94597f4f19fea633851fa2 # v1.4.7
+        uses: Azure/login@e15b166166a8746d1a47596803bd8c1b595455cf # v1.6.0
         with:
           creds: ${{ secrets.AZURE_KV_CI_SERVICE_PRINCIPAL }}
 
@@ -116,11 +117,7 @@ jobs:
           keyvault: "bitwarden-ci"
           secrets: "aws-selfhost-version-access-id,
             aws-selfhost-version-access-key,
-            aws-selfhost-version-bucket-name,
-            r2-electron-access-id,
-            r2-electron-access-key,
-            r2-bitwarden-selfhost-version-bucket-name,
-            cf-prod-account"
+            aws-selfhost-version-bucket-name"
 
       - name: Upload version.json to S3 bucket
         if: ${{ github.event.inputs.release_type != 'Dry Run' }}
@@ -133,19 +130,6 @@ jobs:
           aws s3 cp version.json $AWS_S3_BUCKET_NAME \
           --acl "public-read" \
           --quiet
-
-      - name: Upload version.json to R2 bucket
-        if: ${{ github.event.inputs.release_type != 'Dry Run' }}
-        env:
-          AWS_ACCESS_KEY_ID: ${{ steps.retrieve-secrets.outputs.r2-electron-access-id }}
-          AWS_SECRET_ACCESS_KEY: ${{ steps.retrieve-secrets.outputs.r2-electron-access-key }}
-          AWS_DEFAULT_REGION: 'us-east-1'
-          AWS_S3_BUCKET_NAME: ${{ steps.retrieve-secrets.outputs.r2-bitwarden-selfhost-version-bucket-name }}
-          CF_ACCOUNT: ${{ steps.retrieve-secrets.outputs.cf-prod-account }}
-        run: |
-          aws s3 cp version.json $AWS_S3_BUCKET_NAME \
-          --quiet \
-          --endpoint-url https://${CF_ACCOUNT}.r2.cloudflarestorage.com
 
   tag-docker-latest:
     name: Tag Docker Hub images with release version and latest
@@ -185,12 +169,12 @@ jobs:
           echo "GitHub event: $GITHUB_EVENT"
 
       - name: Checkout repo
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           ref: main
 
       - name: Login to Azure - Prod Subscription
-        uses: Azure/login@92a5484dfaf04ca78a94597f4f19fea633851fa2 # v1.4.7
+        uses: Azure/login@e15b166166a8746d1a47596803bd8c1b595455cf # v1.6.0
         with:
           creds: ${{ secrets.AZURE_PROD_KV_CREDENTIALS }}
 
@@ -249,7 +233,7 @@ jobs:
       - setup
       - release
     env:
-      _RELEASE_VERSION: ${{ github.event.inputs.release_version }}-beta # TODO: remove `-beta` after GA
+      _RELEASE_VERSION: ${{ needs.setup.outputs._VERSION }}-beta # TODO: remove `-beta` after GA
     steps:
       ########## DockerHub ##########
       - name: Setup DCT
@@ -266,7 +250,7 @@ jobs:
           chmod +x skopeo
 
       - name: Login to Azure - PROD Subscription
-        uses: Azure/login@92a5484dfaf04ca78a94597f4f19fea633851fa2 # v1.4.7
+        uses: Azure/login@e15b166166a8746d1a47596803bd8c1b595455cf # v1.6.0
         with:
           creds: ${{ secrets.AZURE_PROD_KV_CREDENTIALS }}
 
